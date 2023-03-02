@@ -15,7 +15,8 @@ func main() {
 
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
 		type broadcastMsg struct {
-			Message int `json:"message"`
+			Kind    string `json:"type"`
+			Message int    `json:"message"`
 		}
 		var body broadcastMsg
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
@@ -26,7 +27,10 @@ func main() {
 		// learned to our friends.
 		if messages.Add(body.Message) {
 			for _, friend := range topology[n.ID()] {
-				_ = n.Send(friend, msg)
+				if friend == msg.Src {
+					continue
+				}
+				_ = n.RPC(friend, body, NoopHandler)
 			}
 		}
 		return n.Reply(Ack(msg))
@@ -53,6 +57,8 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
+func NoopHandler(maelstrom.Message) error { return nil }
 
 func Ack(msg maelstrom.Message, kvs ...any) (maelstrom.Message, any) {
 	if len(kvs)%2 != 0 {
