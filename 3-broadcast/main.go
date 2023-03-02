@@ -1,16 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
 func main() {
 	n := maelstrom.NewNode()
-	var topology map[string][]string
+	var topology []string
 	messages := NewSet[int]()
 
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
@@ -26,11 +28,17 @@ func main() {
 		// If we haven't seen this message before, share what we
 		// learned to our friends.
 		if messages.Add(body.Message) {
-			for _, friend := range topology[n.ID()] {
+			for _, friend := range topology {
 				if friend == msg.Src {
 					continue
 				}
-				_ = n.RPC(friend, body, NoopHandler)
+				friend := friend
+				go Retry(context.Background(), func(ctx context.Context) error {
+					ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+					defer cancel()
+					_, err := n.SyncRPC(ctx, friend, body)
+					return err
+				})
 			}
 		}
 		return n.Reply(Ack(msg))
@@ -49,7 +57,7 @@ func main() {
 			return err
 		}
 
-		topology = body.Topology
+		topology = body.Topology[n.ID()]
 		return n.Reply(Ack(msg))
 	})
 
@@ -59,6 +67,18 @@ func main() {
 }
 
 func NoopHandler(maelstrom.Message) error { return nil }
+func Retry(ctx context.Context, task func(context.Context) error) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		// Task should be context aware, which means it should return
+		// when ctx is cancelled.
+		if err := task(ctx); err == nil {
+			return
+		}
+	}
+}
 
 func Ack(msg maelstrom.Message, kvs ...any) (maelstrom.Message, any) {
 	if len(kvs)%2 != 0 {

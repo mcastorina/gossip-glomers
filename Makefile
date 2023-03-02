@@ -61,3 +61,13 @@ test-broadcast: 3-broadcast/broadcast
 	echo $(NODES)
 	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w broadcast --bin ../$< \
 		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE)
+
+.PHONY: broadcast-test-partition
+test-broadcast-partition: 3-broadcast/broadcast
+	$(eval NODES ?= 5)
+	$(eval TIME  ?= 20)
+	$(eval RATE  ?= 10)
+	echo $(NODES)
+	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w broadcast --bin ../$< \
+		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
+		--nemesis partition
