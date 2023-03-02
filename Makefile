@@ -1,5 +1,9 @@
-MAELSTROM_DIR := ./maelstrom 
-MAELSTROM     := PATH="/opt/homebrew/opt/openjdk/bin:$$PATH" ./maelstrom 
+MAELSTROM_DIR := ./maelstrom
+MAELSTROM     := PATH="/opt/homebrew/opt/openjdk/bin:$$PATH" ./maelstrom
+
+.PHONY: debug
+debug:
+	cd $(MAELSTROM_DIR) && $(MAELSTROM) serve
 
 1-echo/echo: $(shell find 1-echo/ -name '*.go')
 	go build -C ./1-echo -o echo
