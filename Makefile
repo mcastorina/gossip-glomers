@@ -11,7 +11,7 @@ echo: 1-echo/echo
 test-echo: 1-echo/echo
 	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w echo --bin ../$< --node-count 1 --time-limit 10
 
-2-unique-ids/unique-ids: $(shell find 1-echo/ -name '*.go')
+2-unique-ids/unique-ids: $(shell find 2-unique-ids/ -name '*.go')
 	go build -C ./2-unique-ids -o unique-ids
 
 .PHONY: unique-ids
