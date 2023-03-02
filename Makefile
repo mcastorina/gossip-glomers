@@ -4,9 +4,10 @@ MAELSTROM     := PATH="/opt/homebrew/opt/openjdk/bin:$$PATH" ./maelstrom
 # Use an impossible comparison to take advantage of top-level tab
 # completion.
 ifneq (0, 0)
-NODES = 1
-TIME  = 10
-RATE  = 10
+NODES    = 1
+TIME     = 10
+RATE     = 10
+LATENCY  = 10
 endif
 
 .PHONY: debug
@@ -58,7 +59,6 @@ test-broadcast: 3-broadcast/broadcast
 	$(eval NODES ?= 1)
 	$(eval TIME  ?= 20)
 	$(eval RATE  ?= 10)
-	echo $(NODES)
 	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w broadcast --bin ../$< \
 		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE)
 
@@ -67,7 +67,16 @@ test-broadcast-partition: 3-broadcast/broadcast
 	$(eval NODES ?= 5)
 	$(eval TIME  ?= 20)
 	$(eval RATE  ?= 10)
-	echo $(NODES)
 	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w broadcast --bin ../$< \
 		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
 		--nemesis partition
+
+.PHONY: broadcast-test-partition
+test-broadcast-latency: 3-broadcast/broadcast
+	$(eval NODES   ?= 25)
+	$(eval TIME    ?= 20)
+	$(eval RATE    ?= 100)
+	$(eval LATENCY ?= 100)
+	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w broadcast --bin ../$< \
+		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
+		--latency $(LATENCY)
