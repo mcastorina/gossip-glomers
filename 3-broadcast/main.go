@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -34,7 +36,7 @@ func main() {
 				}
 				friend := friend
 				go Retry(context.Background(), func(ctx context.Context) error {
-					ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+					ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 					defer cancel()
 					_, err := n.SyncRPC(ctx, friend, body)
 					return err
@@ -49,15 +51,11 @@ func main() {
 	})
 
 	n.Handle("topology", func(msg maelstrom.Message) error {
-		type topologyMsg struct {
-			Topology map[string][]string
+		num, err := strconv.Atoi(n.ID()[1:])
+		if err != nil {
+			panic(err)
 		}
-		var body topologyMsg
-		if err := json.Unmarshal(msg.Body, &body); err != nil {
-			return err
-		}
-
-		topology = body.Topology[n.ID()]
+		topology = []string{fmt.Sprintf("n%d", (num+1)%len(n.NodeIDs()))}
 		return n.Reply(Ack(msg))
 	})
 
