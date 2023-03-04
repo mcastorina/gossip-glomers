@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
-	"strconv"
 	"sync"
 	"time"
 
@@ -14,9 +12,6 @@ import (
 
 func main() {
 	n := maelstrom.NewNode()
-
-	// Our neighbor we send messages to.
-	var friend string
 
 	// Total list of seen messages.
 	seenMessages := NewSet[int]()
@@ -53,7 +48,7 @@ func main() {
 		}
 
 		for _, message := range body.Messages {
-			// If it's a new message, add it to our batch to send to our friend.
+			// If it's a new message, add it to our batch to send to our friends.
 			if seenMessages.Add(message) {
 				cache.Add(message)
 			}
@@ -67,24 +62,27 @@ func main() {
 	})
 
 	n.Handle("topology", func(msg maelstrom.Message) error {
-		num, err := strconv.Atoi(n.ID()[1:])
-		if err != nil {
-			panic(err)
-		}
-		// Set friend globally to be used by other handles.
-		friend = fmt.Sprintf("n%d", (num+1)%len(n.NodeIDs()))
-		cache.SetFlush(ctx, 10*time.Millisecond, func(elems []int) {
-			// When the cache is flushed, send all elements to our friend.
-			go Retry(ctx, func(ctx context.Context) error {
-				body := BatchMessage{
-					Kind:     "batch",
-					Messages: elems,
+		// Use our own topology (send to every node).
+		topology := n.NodeIDs()
+		// Schedule the cache to flush every 500ms.
+		cache.SetFlush(ctx, 500*time.Millisecond, func(elems []int) {
+			// When the cache is flushed, asynchronously send all elements to our friends.
+			for _, friend := range topology {
+				if friend == n.ID() {
+					continue
 				}
-				ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-				defer cancel()
-				_, err := n.SyncRPC(ctx, friend, body)
-				return err
-			})
+				friend := friend
+				go Retry(ctx, func(ctx context.Context) error {
+					body := BatchMessage{
+						Kind:     "batch",
+						Messages: elems,
+					}
+					ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+					defer cancel()
+					_, err := n.SyncRPC(ctx, friend, body)
+					return err
+				})
+			}
 		})
 		return n.Reply(Ack(msg))
 	})
