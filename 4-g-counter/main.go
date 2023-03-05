@@ -13,25 +13,14 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-var (
-	machineID uint64
-	snowflake Snowflake
-)
+var snowflake Snowflake
 
 func main() {
 	n := maelstrom.NewNode()
 	kv := KV[State]{maelstrom.NewSeqKV(n)}
 
 	n.Handle("init", func(msg maelstrom.Message) error {
-		body, err := Parse[struct {
-			ID string `json:"node_id"`
-		}](msg)
-		if err != nil {
-			return err
-		}
-
-		hash := sha256.Sum256([]byte(body.ID))
-		machineID = binary.BigEndian.Uint64(hash[:])
+		snowflake.Init(n.ID())
 		return nil
 	})
 
@@ -51,13 +40,14 @@ func main() {
 	})
 
 	n.Handle("read", func(msg maelstrom.Message) error {
-		// Read all values from the kv.
+		// Perform no-op compare and swap to ensure we have the latest value.
+		// By updating only the ID, we guarantee write order is preserved.
+		var state State
 		Retry(context.Background(), func(ctx context.Context) error {
-			value, _ := kv.ReadDefault(ctx, "g-counter")
-			return kv.CompareAndSwap(ctx, "g-counter", value, value.Add(0))
+			state, _ = kv.ReadDefault(ctx, "g-counter")
+			return kv.CompareAndSwap(ctx, "g-counter", state, state.Add(0))
 		})
-		value, _ := kv.ReadDefault(context.TODO(), "g-counter")
-		return n.Reply(Ack(msg, "value", value.Value))
+		return n.Reply(Ack(msg, "value", state.Value))
 	})
 
 	if err := n.Run(); err != nil {
@@ -162,6 +152,7 @@ func (kv KV[T]) asJSON(t T) string {
 type Snowflake struct {
 	lastTimestamp uint64
 	overflow      uint64
+	machineID     uint64
 }
 
 func (s *Snowflake) Next() uint64 {
@@ -178,5 +169,10 @@ func (s *Snowflake) Next() uint64 {
 		overflow = 0
 	}
 	// 41 bits of timestamp, 10 bits of machine ID, and 12 bits of overflow
-	return (ts & 0x01ffffffffff) | ((machineID & 0x03ff) << 41) | ((overflow & 0x0fff) << 51)
+	return (ts & 0x01ffffffffff) | ((s.machineID & 0x03ff) << 41) | ((overflow & 0x0fff) << 51)
+}
+
+func (s *Snowflake) Init(machineID string) {
+	hash := sha256.Sum256([]byte(machineID))
+	s.machineID = binary.BigEndian.Uint64(hash[:])
 }
