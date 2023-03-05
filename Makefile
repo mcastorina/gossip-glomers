@@ -4,10 +4,11 @@ MAELSTROM     := PATH="/opt/homebrew/opt/openjdk/bin:$$PATH" ./maelstrom
 # Use an impossible comparison to take advantage of top-level tab
 # completion.
 ifneq (0, 0)
-NODES    = 1
-TIME     = 10
-RATE     = 10
-LATENCY  = 10
+NODES        = 1
+TIME         = 10
+RATE         = 10
+LATENCY      = 10
+CONCURRENCY  = 1n
 endif
 
 .PHONY: debug
@@ -97,3 +98,21 @@ test-g-counter: 4-g-counter/g-counter
 	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w g-counter --bin ../$< \
 		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
 		--nemesis partition
+
+################################################################################
+
+5-kafka/kafka: $(shell find 5-kafka/ -name '*.go')
+	go build -C ./5-kafka -o kafka
+
+.PHONY: kafka
+kafka: 5-kafka/kafka
+
+.PHONY: kafka-test
+test-kafka: 5-kafka/kafka
+	$(eval NODES ?= 1)
+	$(eval TIME  ?= 20)
+	$(eval RATE  ?= 1000)
+	$(eval CONCURRENCY ?= 2n)
+	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w kafka --bin ../$< \
+		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
+		--concurrency $(CONCURRENCY)
