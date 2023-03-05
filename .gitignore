@@ -2,3 +2,4 @@ maelstrom/
 1-echo/echo
 2-unique-ids/unique-ids
 3-broadcast/broadcast
+4-g-counter/g-counter

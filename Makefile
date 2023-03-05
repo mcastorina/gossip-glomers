@@ -80,3 +80,20 @@ test-broadcast-latency: 3-broadcast/broadcast
 	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w broadcast --bin ../$< \
 		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
 		--latency $(LATENCY)
+
+################################################################################
+
+4-g-counter/g-counter: $(shell find 4-g-counter/ -name '*.go')
+	go build -C ./4-g-counter -o g-counter
+
+.PHONY: g-counter
+g-counter: 4-g-counter/g-counter
+
+.PHONY: g-counter-test
+test-g-counter: 4-g-counter/g-counter
+	$(eval NODES ?= 3)
+	$(eval TIME  ?= 20)
+	$(eval RATE  ?= 100)
+	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w g-counter --bin ../$< \
+		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
+		--nemesis partition
