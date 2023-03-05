@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
@@ -22,7 +23,7 @@ func main() {
 	kv := KV[State]{maelstrom.NewSeqKV(n)}
 
 	n.Handle("init", func(msg maelstrom.Message) error {
-		body, err := Unmarshal[struct {
+		body, err := Parse[struct {
 			ID string `json:"node_id"`
 		}](msg)
 		if err != nil {
@@ -35,7 +36,7 @@ func main() {
 	})
 
 	n.Handle("add", func(msg maelstrom.Message) error {
-		body, err := Unmarshal[struct {
+		body, err := Parse[struct {
 			Delta int `json:"delta"`
 		}](msg)
 		if err != nil {
@@ -44,7 +45,7 @@ func main() {
 
 		go Retry(context.Background(), func(ctx context.Context) error {
 			current, _ := kv.ReadDefault(ctx, "g-counter")
-			return kv.CompareAndSwap(ctx, "g-counter", current, current.Add(body.Delta), true)
+			return kv.CompareAndSwap(ctx, "g-counter", current, current.Add(body.Delta))
 		})
 		return n.Reply(Ack(msg))
 	})
@@ -53,7 +54,7 @@ func main() {
 		// Read all values from the kv.
 		Retry(context.Background(), func(ctx context.Context) error {
 			value, _ := kv.ReadDefault(ctx, "g-counter")
-			return kv.CompareAndSwap(ctx, "g-counter", value, value.Add(0), true)
+			return kv.CompareAndSwap(ctx, "g-counter", value, value.Add(0))
 		})
 		value, _ := kv.ReadDefault(context.TODO(), "g-counter")
 		return n.Reply(Ack(msg, "value", value.Value))
@@ -96,7 +97,7 @@ func Ack(msg maelstrom.Message, kvs ...any) (maelstrom.Message, any) {
 	return msg, resp
 }
 
-func Unmarshal[T any](msg maelstrom.Message) (T, error) {
+func Parse[T any](msg maelstrom.Message) (T, error) {
 	var value T
 	return value, json.Unmarshal(msg.Body, &value)
 }
@@ -113,13 +114,13 @@ func (s State) Add(delta int) State {
 	}
 }
 
-type KV[T any] struct{ *maelstrom.KV }
+type KV[T any] struct{ kv *maelstrom.KV }
 
 func (kv KV[T]) ReadDefault(ctx context.Context, key string) (T, error) {
 	var defaultT T
-	value, err := kv.KV.Read(ctx, key)
+	value, err := kv.Read(ctx, key)
 	if err == nil {
-		return kv.mapToT(value.(map[string]any)), nil
+		return value, nil
 	}
 	if err, ok := err.(*maelstrom.RPCError); ok && err.Code == maelstrom.KeyDoesNotExist {
 		return defaultT, nil
@@ -127,11 +128,33 @@ func (kv KV[T]) ReadDefault(ctx context.Context, key string) (T, error) {
 	return defaultT, err
 }
 
-func (kv KV[T]) mapToT(m map[string]any) T {
+func (kv KV[T]) Read(ctx context.Context, key string) (T, error) {
 	var t T
-	b, _ := json.Marshal(m)
-	json.Unmarshal(b, &t)
-	return t
+	value, err := kv.kv.Read(ctx, key)
+	if err != nil {
+		return t, err
+	}
+	jsonString, ok := value.(string)
+	if !ok {
+		return t, fmt.Errorf("expected JSON encoded value")
+	}
+	return t, json.Unmarshal([]byte(jsonString), &t)
+}
+
+func (kv KV[T]) Write(ctx context.Context, key string, value T) error {
+	return kv.kv.Write(ctx, key, kv.asJSON(value))
+}
+
+func (kv KV[T]) CompareAndSwap(ctx context.Context, key string, oldValue, newValue T) error {
+	return kv.kv.CompareAndSwap(ctx, key, kv.asJSON(oldValue), kv.asJSON(newValue), true)
+}
+
+func (kv KV[T]) asJSON(t T) string {
+	jsonBytes, err := json.Marshal(t)
+	if err != nil {
+		panic(err)
+	}
+	return string(jsonBytes)
 }
 
 // Snowflake is an implementation of Twitter's Snowflake ID algorithm.
