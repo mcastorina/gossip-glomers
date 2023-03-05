@@ -65,7 +65,7 @@ func main() {
 		// Use our own topology (send to every node).
 		topology := n.NodeIDs()
 		// Schedule the cache to flush every 500ms.
-		cache.SetFlush(ctx, 500*time.Millisecond, func(elems []int) {
+		cache.SetFlush(ctx, 1000*time.Millisecond, func(elems []int) {
 			// When the cache is flushed, asynchronously send all elements to our friends.
 			for _, friend := range topology {
 				if friend == n.ID() {
