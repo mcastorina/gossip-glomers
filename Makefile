@@ -12,8 +12,13 @@ CONCURRENCY  = 1n
 endif
 
 .PHONY: debug
-debug:
+debug: $(MAELSTROM_DIR)
 	cd $(MAELSTROM_DIR) && $(MAELSTROM) serve
+
+$(MAELSTROM_DIR):
+	curl -L 'https://github.com/jepsen-io/maelstrom/releases/download/v0.2.3/maelstrom.tar.bz2' > maelstrom.tar.bz2
+	tar xvf maelstrom.tar.bz2
+	rm -f maelstrom.tar.bz2
 
 ################################################################################
 
