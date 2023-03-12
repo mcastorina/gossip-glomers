@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -60,14 +61,107 @@ func main() {
 	}
 }
 
-// "key": []int
-// "commit-offsets": {"key": int}
+// Kafka is an interface to a kafka-like log service. It wraps a Linear KV
+// store, using it as a map of "key" to messages ([]int) and all
+// "commit-offsets" (map[string]int).
+//
+// Internally, it partitions messages into groups of 100 to minimize the amount
+// of data we need to read and write back to the database.
 type Kafka struct {
-	kv *maelstrom.KV
+	partitions     map[string]int
+	partitionsLock sync.Mutex
+	kv             *maelstrom.KV
 }
 
 func NewKafka(kv *maelstrom.KV) Kafka {
-	return Kafka{kv: kv}
+	return Kafka{
+		kv:         kv,
+		partitions: make(map[string]int),
+	}
+}
+
+func (k *Kafka) Append(key string, value int) int {
+	var id int
+	startPartition := k.getPartition(key)
+	partition := startPartition
+	Retry(context.Background(), func(ctx context.Context) error {
+		key := fmt.Sprintf("%d-%s", partition, key)
+		messages, err := k.readMessages(ctx, key)
+		if err != nil {
+			return err
+		}
+		if len(messages) >= 100 {
+			partition++
+			return fmt.Errorf("partition full")
+		}
+		id = 100*partition + len(messages)
+		newMessages := append(messages, value)
+		return k.CompareAndSwap(ctx, key, messages, newMessages)
+	})
+	if id%100 == 99 {
+		// Pre-emptively increase the partition if we know the next one
+		// will fail.
+		partition++
+	}
+	if partition != startPartition {
+		k.casPartition(key, startPartition, partition)
+	}
+	return id
+}
+
+func (k *Kafka) CommitOffsets(newOffsets map[string]int) {
+	Retry(context.Background(), func(ctx context.Context) error {
+		offsets, err := k.readOffsets(ctx)
+		if err != nil {
+			return err
+		}
+		for k, v := range offsets {
+			// If the key is already present in newOffsets, take it
+			// as the latest value.
+			if _, ok := newOffsets[k]; ok {
+				continue
+			}
+			// Otherwise, preserve the previous values.
+			newOffsets[k] = v
+		}
+		return k.CompareAndSwap(ctx, "commit-offsets", offsets, newOffsets)
+	})
+}
+
+func (k *Kafka) Offsets(keys ...string) map[string]int {
+	offsets, _ := k.readOffsets(context.Background())
+	for _, key := range keys {
+		// Delete any keys that weren't requested.
+		if _, ok := offsets[key]; ok {
+			continue
+		}
+		delete(offsets, key)
+	}
+	return offsets
+}
+
+func (k *Kafka) Read(keyOffsets map[string]int) map[string][][]int {
+	logs := make(map[string][][]int, len(keyOffsets))
+	for key, offset := range keyOffsets {
+		messages, _ := k.readMessages(context.Background(), fmt.Sprintf("%d-%s", offset/100, key))
+		// No new messages.
+		if offset%100 >= len(messages) {
+			continue
+		}
+		// Read all messages after offset.
+		vals := messages[offset%100:]
+		// Convert to [offset, message] pairs.
+		keyVals := make([][]int, len(vals))
+		for i := 0; i < len(keyVals); i++ {
+			keyVals[i] = []int{offset + i, vals[i]}
+		}
+		logs[key] = keyVals
+	}
+	return logs
+}
+
+func (k *Kafka) CompareAndSwap(ctx context.Context, key string, from, to any) error {
+	return k.kv.CompareAndSwap(ctx, key, asJSON(from), asJSON(to), true)
 }
 
 func (k *Kafka) readMessages(ctx context.Context, key string) ([]int, error) {
@@ -108,73 +202,18 @@ func (k *Kafka) readOffsets(ctx context.Context) (map[string]int, error) {
 	return offsets, nil
 }
 
-func (k *Kafka) Append(key string, value int) int {
-	var id int
-	Retry(context.Background(), func(ctx context.Context) error {
-		messages, err := k.readMessages(ctx, key)
-		if err != nil {
-			return err
-		}
-		id = len(messages)
-		newMessages := append(messages, value)
-		return k.CompareAndSwap(ctx, key, messages, newMessages)
-	})
-	return id
+func (k *Kafka) getPartition(key string) int {
+	k.partitionsLock.Lock()
+	defer k.partitionsLock.Unlock()
+	return k.partitions[key]
 }
 
-func (k *Kafka) CommitOffsets(newOffsets map[string]int) {
-	Retry(context.Background(), func(ctx context.Context) error {
-		offsets, err := k.readOffsets(ctx)
-		if err != nil {
-			return err
-		}
-		for k, v := range offsets {
-			// If the key is already present in newOffsets, take it
-			// as the latest value.
-			if _, ok := newOffsets[k]; ok {
-				continue
-			}
-			// Otherwise, preserve the previous values.
-			newOffsets[k] = v
-		}
-		return k.CompareAndSwap(ctx, "commit-offsets", offsets, newOffsets)
-	})
-}
-
-func (k *Kafka) Offsets(keys ...string) map[string]int {
-	offsets, _ := k.readOffsets(context.Background())
-	for _, key := range keys {
-		// Delete any keys that weren't requested.
-		if _, ok := offsets[key]; ok {
-			continue
-		}
-		delete(offsets, key)
+func (k *Kafka) casPartition(key string, from, to int) {
+	k.partitionsLock.Lock()
+	defer k.partitionsLock.Unlock()
+	if k.partitions[key] == from {
+		k.partitions[key] = to
 	}
-	return offsets
-}
-
-func (k *Kafka) Read(keyOffsets map[string]int) map[string][][]int {
-	logs := make(map[string][][]int, len(keyOffsets))
-	for key, offset := range keyOffsets {
-		messages, _ := k.readMessages(context.Background(), key)
-		// No new messages.
-		if offset >= len(messages) {
-			continue
-		}
-		// Read all messages after offset.
-		vals := messages[offset:]
-		// Convert to [offset, message] pairs.
-		keyVals := make([][]int, len(vals))
-		for i := 0; i < len(keyVals); i++ {
-			keyVals[i] = []int{offset + i, vals[i]}
-		}
-		logs[key] = keyVals
-	}
-	return logs
-}
-
-func (k *Kafka) CompareAndSwap(ctx context.Context, key string, from, to any) error {
-	return k.kv.CompareAndSwap(ctx, key, asJSON(from), asJSON(to), true)
 }
 
 func asJSON(v any) string {
