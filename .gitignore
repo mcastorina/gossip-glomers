@@ -4,3 +4,4 @@ maelstrom/
 3-broadcast/broadcast
 4-g-counter/g-counter
 5-kafka/kafka
+6-txn-rw-register/txn-rw-register

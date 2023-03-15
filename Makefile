@@ -121,3 +121,22 @@ test-kafka: 5-kafka/kafka
 	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w kafka --bin ../$< \
 		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
 		--concurrency $(CONCURRENCY)
+
+################################################################################
+
+6-txn-rw-register/txn-rw-register: $(shell find 6-txn-rw-register/ -name '*.go')
+	go build -C ./6-txn-rw-register -o txn-rw-register
+
+.PHONY: txn-rw-register
+txn-rw-register: 6-txn-rw-register/txn-rw-register
+
+.PHONY: txn-rw-register-test
+test-txn-rw-register: 6-txn-rw-register/txn-rw-register
+	$(eval NODES ?= 1)
+	$(eval TIME  ?= 20)
+	$(eval RATE  ?= 1000)
+	$(eval CONCURRENCY ?= 2n)
+	cd $(MAELSTROM_DIR) && $(MAELSTROM) test -w txn-rw-register --bin ../$< \
+		--node-count $(NODES) --time-limit $(TIME) --rate $(RATE) \
+		--concurrency $(CONCURRENCY) --consistency-models read-uncommitted \
+		--availability total
